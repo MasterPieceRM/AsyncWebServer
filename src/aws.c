@@ -336,7 +336,6 @@ enum connection_state connection_send_static(struct connection *conn) {
             conn->state = STATE_SENDING_404;
             return conn->state;
         }
-<<<<<<< HEAD
     } else {
         conn->file_pos += bytes_sent;
         if (conn->file_pos == conn->file_size) {
@@ -347,20 +346,6 @@ enum connection_state connection_send_static(struct connection *conn) {
             conn->state = STATE_SENDING_DATA;
             return STATE_SENDING_DATA;
         }
-=======
-    }
-
-    conn->file_pos += bytes_sent;
-    if (conn->file_pos == conn->file_size) {
-        // All data has been sent, so return the next state
-        dlog(LOG_INFO, "All data sent\n");
-        conn->state = STATE_DATA_SENT;
-        return STATE_DATA_SENT;
-    } else {
-        dlog(LOG_INFO, "Not all data sent\n");
-        // Not all data has been sent, so return the current state
-        return conn->state;
->>>>>>> c2ccaba217239f4923e75a6afc38dfc58480d997
     }
     return STATE_SENDING_DATA;
 }
@@ -417,23 +402,7 @@ void handle_input(struct connection *conn) {
         break;
 
     case STATE_ASYNC_ONGOING:
-<<<<<<< HEAD
         connection_complete_async_io(conn);
-=======
-        // TODO: Handle ongoing asynchronous I/O, check for completion
-        // Example: connection_complete_async_io(conn);
-        break;
-    case STATE_REQUEST_RECEIVED:
-        connection_prepare_send_reply_header(conn);
-        conn->state = STATE_SENDING_DATA;
-        while (conn->state == STATE_SENDING_DATA)
-            connection_send_data(conn);
-        dlog(LOG_INFO, "Conn->state: %d\n", conn->state);
-        break;
-    case STATE_SENDING_404:
-        connection_prepare_send_404(conn);
-        conn->state = STATE_404_SENT;
->>>>>>> c2ccaba217239f4923e75a6afc38dfc58480d997
         break;
     default:
         // Handle other states if necessary
@@ -463,14 +432,9 @@ void handle_output(struct connection *conn) {
         connection_start_async_io(conn);
         break;
 
-<<<<<<< HEAD
     case STATE_REQUEST_RECEIVED:
         connection_prepare_send_reply_header(conn);
         conn->state = STATE_SENDING_HEADER;
-=======
-    case STATE_SENDING_DATA:
-        // TODO: Handle sending static data
->>>>>>> c2ccaba217239f4923e75a6afc38dfc58480d997
         break;
 
     case STATE_SENDING_HEADER:
