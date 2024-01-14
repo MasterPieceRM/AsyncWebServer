@@ -23,6 +23,7 @@
 #include "utils/sock_util.h"
 #include "utils/util.h"
 #include "utils/w_epoll.h"
+#define MAXEVENTS 100
 
 /* server socket file descriptor */
 static int listenfd;
@@ -62,10 +63,13 @@ static int aws_on_path_cb(http_parser *p, const char *buf, size_t len)
 
 static void connection_prepare_send_reply_header(struct connection *conn)
 {
-	const char *header_format = "HTTP/1.0 200 OK\r\n"
+	const char *header_format = "HTTP/1.1 200 OK\r\n"
+								"Server: Apache/2.2.9\r\n"
+								"Accept-Ranges: bytes\r\n"
 								"Content-Length: %ld\r\n"
-								"Content-Type: application/octet-stream\r\n"
+								"Vary: Accept-Encoding\r\n"
 								"Connection: close\r\n"
+								"Content-Type: text/html\r\n"
 								"\r\n";
 	int header_len = snprintf(conn->send_buffer, sizeof(conn->send_buffer),
 							  header_format, conn->file_size);
@@ -74,6 +78,7 @@ static void connection_prepare_send_reply_header(struct connection *conn)
 
 static void connection_prepare_send_404(struct connection *conn)
 {
+	/* Prepare the connection buffer to send the 404 header. */
 	const char *response = "HTTP/1.1 404 Not Found\r\n"
 						   "Content-Type: text/html\r\n"
 						   "Connection: close\r\n"
@@ -86,7 +91,6 @@ static void connection_prepare_send_404(struct connection *conn)
 	} while (bytes_sent > 0);
 
 	if (bytes_sent <= 0) {
-		// Handle error: failed to send the 404 response
 		perror("send");
 		connection_remove(conn);
 	}
@@ -156,18 +160,19 @@ void connection_start_async_io(struct connection *conn)
 void connection_remove(struct connection *conn)
 {
 	/* Remove connection handler. */
+
 	if (conn->sockfd != -1) {
 		close(conn->sockfd);
 		conn->sockfd = -1;
 	}
+
 	if (conn->fd != -1) {
 		close(conn->fd);
 		conn->fd = -1;
 	}
-	if (conn != NULL) {
-		// Free the connection handler
+
+	if (conn != NULL)
 		free(conn);
-	}
 	dlog(LOG_INFO, "Connection removed\n");
 }
 void handle_new_connection(void)
@@ -185,7 +190,6 @@ void handle_new_connection(void)
 		close(client_socket);
 		return;
 	}
-
 	w_epoll_add_ptr_in(epollfd, conn->sockfd, conn);
 }
 void receive_data(struct connection *conn)
@@ -203,7 +207,6 @@ void receive_data(struct connection *conn)
 	} while (bytes > 0);
 
 	if (parse_header(conn) == -1) {
-		// The header is invalid, so send a 404 response
 		conn->state = STATE_SENDING_404;
 		return;
 	}
@@ -217,12 +220,13 @@ int connection_open_file(struct connection *conn)
 {
 	/* Open file and update connection fields. */
 	int fd = open(conn->filename, O_RDONLY);
-	struct stat st;
 
 	if (fd == -1) {
 		perror("open");
 		return -1;
 	}
+	struct stat st;
+
 	if (fstat(fd, &st) == -1) {
 		perror("fstat");
 		close(fd);
@@ -243,6 +247,7 @@ void connection_complete_async_io(struct connection *conn)
 	struct io_event events[20];
 	int num_events = io_getevents(conn->ctx, 1, 1, events, NULL);
 
+	dlog(LOG_INFO, "Num events: %d\n", num_events);
 	if (num_events == -1) {
 		perror("io_getevents");
 		return;
@@ -291,7 +296,6 @@ int parse_header(struct connection *conn)
 			snprintf(conn->filename, BUFSIZ, "%s%s", AWS_DOCUMENT_ROOT,
 					 conn->request_path + 1);
 		} else {
-			// Invalid path, send 404
 			connection_prepare_send_404(conn);
 			return -1;
 		}
@@ -303,7 +307,6 @@ int parse_header(struct connection *conn)
 enum connection_state connection_send_static(struct connection *conn)
 {
 	/* Send static data using sendfile(2). */
-	// Send the file content
 	off_t offset = conn->file_pos;
 	int bytes_sent = sendfile(conn->sockfd, conn->fd, &offset,
 							  conn->file_size - conn->file_pos);
@@ -339,6 +342,7 @@ int connection_send_data(struct connection *conn)
 		conn->send_pos += bytes_sent;
 		total_bytes_sent += bytes_sent;
 	} while (conn->send_pos < conn->send_len);
+
 	return total_bytes_sent;
 }
 
@@ -346,7 +350,6 @@ void handle_input(struct connection *conn)
 {
 	switch (conn->state) {
 	case STATE_INITIAL:
-		// TODO: Handle initial state logic, e.g., set up for receiving data
 		conn->state = STATE_RECEIVING_DATA;
 		receive_data(conn);
 		w_epoll_update_ptr_out(epollfd, conn->sockfd, conn);
@@ -399,6 +402,7 @@ void handle_output(struct connection *conn)
 		break;
 
 	case STATE_HEADER_SENT:
+		dlog(LOG_INFO, "Data sent header\n");
 		if (conn->res_type == RESOURCE_TYPE_STATIC)
 			conn->state = STATE_SENDING_DATA;
 		else if (conn->res_type == RESOURCE_TYPE_DYNAMIC)
@@ -408,10 +412,12 @@ void handle_output(struct connection *conn)
 		break;
 
 	case STATE_DATA_SENT:
+		dlog(LOG_INFO, "Data sent\n");
 		connection_remove(conn);
 		break;
 
 	case STATE_SENDING_DATA:
+		dlog(LOG_INFO, "Sending data\n");
 		if (conn->res_type == RESOURCE_TYPE_STATIC) {
 			conn->state = connection_send_static(conn);
 		} else if (conn->res_type == RESOURCE_TYPE_DYNAMIC) {
@@ -432,8 +438,10 @@ void handle_client(uint32_t events, struct connection *conn)
 {
 	if (events & EPOLLIN)
 		handle_input(conn);
+
 	if (events & EPOLLOUT)
 		handle_output(conn);
+
 	if (events & (EPOLLHUP | EPOLLERR)) {
 		dlog(LOG_INFO, "HUP/ERR\n");
 		connection_remove(conn);
@@ -443,6 +451,7 @@ void handle_client(uint32_t events, struct connection *conn)
 int main(void)
 {
 	int rc;
+
 	/* TODO: Initialize asynchronous operations. */
 	ctx = 0;
 	if (io_setup(1, &ctx) != 0) {
