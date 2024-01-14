@@ -28,6 +28,7 @@ enum connection_state {
     STATE_HEADER_SENT,
     STATE_404_SENT,
     STATE_CONNECTION_CLOSED,
+    STATE_SENDING_DYNAMIC,
     STATE_NO_STATE // Used for assignment skelethon
 };
 
